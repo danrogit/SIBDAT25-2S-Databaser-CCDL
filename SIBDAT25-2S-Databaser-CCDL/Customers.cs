@@ -23,6 +23,7 @@ namespace SIBDAT25_2S_Databaser_CCDL
             CostumerId = costumerId;
         }
 
+        //CRUD
         public void Add(Customers newCustomer)
         {
             using (var conn = new NpgsqlConnection(connectionString))

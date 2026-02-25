@@ -12,16 +12,17 @@ namespace SIBDAT25_2S_Databaser_CCDL
     {
         private string connectionString = ConfigurationManager.ConnectionStrings["PostgreSQL"].ConnectionString;
 
-        public int Id { get; set; }   
+        public int CarId { get; set; }   
         public string Model { get; set; }
         public int Year { get; set; }
-        public Cars(int id, string model, int year)
+        public Cars(int carId, string model, int year)
         {
-            Id = id;         
+            CarId = carId;         
             Model = model;
             Year = year;
         }
 
+        //CRUD
         public void Add(Cars newCar)
         {
             using (var conn = new NpgsqlConnection(connectionString))
@@ -68,13 +69,13 @@ namespace SIBDAT25_2S_Databaser_CCDL
                 {
                     cmd.Parameters.AddWithValue("model", updatedCar.Model);
                     cmd.Parameters.AddWithValue("year", updatedCar.Year);
-                    cmd.Parameters.AddWithValue("id", updatedCar.Id);
+                    cmd.Parameters.AddWithValue("id", updatedCar.CarId);
                     cmd.ExecuteNonQuery();
                 }
             }
         }
 
-        public void Delete(int id)
+        public void Delete(int carId)
         {
             using (var conn = new NpgsqlConnection(connectionString))
             {
@@ -82,7 +83,7 @@ namespace SIBDAT25_2S_Databaser_CCDL
                 string query = "DELETE FROM cars WHERE id = @id";
                 using (var cmd = new NpgsqlCommand(query, conn))
                 {
-                    cmd.Parameters.AddWithValue("id", id);
+                    cmd.Parameters.AddWithValue("id", CarId);
                     cmd.ExecuteNonQuery();
                 }
             }
@@ -90,7 +91,7 @@ namespace SIBDAT25_2S_Databaser_CCDL
 
         public override string ToString()
         {
-            return $"{Id}: {Model} ({Year})";
+            return $"{CarId}: {Model} ({Year})";
         }
     }
 }
