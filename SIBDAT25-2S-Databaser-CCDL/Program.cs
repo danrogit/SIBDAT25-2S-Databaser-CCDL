@@ -1,58 +1,67 @@
-﻿using System;
+﻿using FlaadesystemV1;
+using Npgsql;           // .NET driver til PostgreSQL
+using Spectre.Console;  // bruges til pæne tabeller, menuer og farvet output
+using System;
 using System.Collections.Generic;
 using System.Globalization;
-using Npgsql;
-using Spectre.Console;
 
-namespace FlaadesystemV1
+namespace SIBDAT25_2S_DBString
 {
     internal class Program
     {
+        /// <summary>
+        /// Program entry point – ansvarlig for:
+        /// 1) Opsætning af DB connection string
+        /// 2) Visning af velkomstskærm
+        /// 3) Login-flow (admin)
+        /// 4) Hovedmenu + routing til undermenuer
+        /// </summary>
         static void Main(string[] args)
         {
-            // Programmet tester kun om der kan oprettes forbindelse til databasen for "Flådesystem v1.0".
-            // NOTE: I produktion bør du hente URI/password fra en sikker kilde (fx miljøvariabel).
-
+            // Parser DB-forbindelsesinfo ud af en URI-streng
             var uri = new Uri("postgres://postgres:FSP02UXAG14HBHLiqtjKMU7R47akAG2Hk0Lsh0ySg2DBO0OfkHLkvwp8WOoXx89u@95.211.27.223:5510/postgres");
 
-            // Byg en Npgsql-tilslutningsstreng ud fra URI'en
+            // Bygger den egentlige connection string fra URI-delene
             var builder = new NpgsqlConnectionStringBuilder
             {
                 Host = uri.Host,
                 Port = uri.Port,
-                Username = uri.UserInfo.Split(':')[0],
-                Password = uri.UserInfo.Split(':')[1],
-                Database = uri.AbsolutePath.TrimStart('/'),
-                SslMode = SslMode.Disable
+                Username = uri.UserInfo.Split(':')[0],      // brugernavn sidder før ':'
+                Password = uri.UserInfo.Split(':')[1],      // password sidder efter ':'
+                Database = uri.AbsolutePath.TrimStart('/'), // fjern det ledende '/'
+                SslMode = SslMode.Disable                   // slukket til test, ville bruges i produktion
             };
 
+            // ConnectionString, der bruges overalt i programmet til at åbne forbindelser
             string connectionString = builder.ConnectionString;
 
-            var asciiArt = @"                                                                                           
+            // ASCII-logo til velkomstskærmen
+            var asciiArt = @"                                                                                            
               ▄▀▄                                                                          
 ██████ ▄▄     ▄█▄  ▄▄▄▄  ▄▄▄▄▄  ▄▄▄▄ ▄▄ ▄▄  ▄▄▄▄ ▄▄▄▄▄▄ ▄▄▄▄▄ ▄▄   ▄▄   ▄▄ ▄▄  ▄██   ▄██▄  
 ██▄▄   ██    ██▀██ ██▀██ ██▄▄  ███▄▄ ▀███▀ ███▄▄   ██   ██▄▄  ██▀▄▀██   ██▄██   ██  ██  ██ 
 ██     ██▄▄▄ ██▀██ ████▀ ██▄▄▄ ▄▄██▀   █   ▄▄██▀   ██   ██▄▄▄ ██   ██    ▀█▀  ▄ ██ ▄ ▀██▀  
-                                                                                            ";
+                                                                                           ";
 
             try
             {
-                // Title
+                // Vis logo øverst uden ramme
                 var titlePanel = new Panel(new Text(asciiArt))
                     .Border(BoxBorder.None)
                     .Padding(0, 0)
                     .Expand();
                 AnsiConsole.Write(titlePanel);
 
-
-                // Check DB reachable
+                // Prøv at åbne en DB-forbindelse for at tjekke at serveren svarer
+                // AnsiConsole.Status viser en spinner imens handlingen udføres
                 AnsiConsole.Status()
                     .Spinner(Spinner.Known.Dots)
                     .Start("Opretter forbindelse til databasen...", ctx =>
                     {
+                        // using sikrer at forbindelsen bliver lukket og disposed igen
                         using (var conn = new NpgsqlConnection(connectionString))
                         {
-                            conn.Open();
+                            conn.Open(); // kaster exception hvis DB ikke kan nås
                         }
                     });
 
@@ -60,37 +69,45 @@ namespace FlaadesystemV1
                 AnsiConsole.MarkupLine("[green]✓ Forbindelse til databasen er oprettet succesfuldt.[/]");
                 AnsiConsole.WriteLine();
 
-                // Info
+                // Lille info-boks med systemnavn
                 var info = new Panel("Konsolbaseret administrationssystem til den smarte bilhandler.")
                     .Header("Flådesystem v1.0", Justify.Center)
                     .Expand();
                 AnsiConsole.Write(info);
                 AnsiConsole.WriteLine();
 
+                // Hint til testbrugeren – ville ikke være her i et rigtigt system
                 AnsiConsole.MarkupLine("[grey]Pst... admin er 'ccdl', koden er '12345678' ;)[/]");
 
-                // Login with retries
+                // Login – maks 3 forsøg inden programmet lukker
                 const int maxAttempts = 3;
-                bool authenticated = false;
+                bool authenticated = false; // flag, der angiver om login er lykkedes
 
+                // Login-loop – stopper enten når authenticated = true eller når maxAttempts er nået
                 for (int attempt = 1; attempt <= maxAttempts && !authenticated; attempt++)
                 {
+                    // Læs brugernavn fra konsollen
                     var adminUser = AnsiConsole.Ask<string>("Indtast [yellow]admin brugernavn[/]:");
+                    // .Secret() skjuler det der tastes i konsollen
                     var adminPass = AnsiConsole.Prompt(new TextPrompt<string>("Indtast [yellow]admin kodeord[/]:").Secret());
 
+                    // Status-spinner mens loginoplysninger verificeres mod databasen
                     AnsiConsole.Status()
                         .Spinner(Spinner.Known.Line)
                         .Start("Verificerer legitimationsoplysninger...", ctx =>
                         {
+                            // Kald til AdminAuth som slår brugernavn+password op i DB
                             authenticated = AdminAuth.Authenticate(connectionString, adminUser, adminPass);
                         });
 
                     if (authenticated)
                     {
+                        // Så snart login er godkendt, springes ud af login-loopet
                         AnsiConsole.MarkupLine("[green]✓ Login succesfuldt. Velkommen.[/]");
-                        break;
+                        break; // hop ud af login-loopet
                     }
 
+                    // Vis fejl og tæl forsøg
                     AnsiConsole.MarkupLine("[red]Brugernavn eller kodeord er forkert.[/]");
                     if (attempt < maxAttempts)
                         AnsiConsole.MarkupLine($"[grey]Forsøg {attempt}/{maxAttempts} mislykkedes. Prøv igen.[/]");
@@ -98,16 +115,19 @@ namespace FlaadesystemV1
                         AnsiConsole.MarkupLine("[grey]Maksimalt antal forsøg nået.[/]");
                 }
 
+                // Afslut hvis alle loginforsøg mislykkedes
                 if (!authenticated)
                 {
                     AnsiConsole.MarkupLine("[red]Login mislykkedes. Program afsluttes.[/]");
+                    // ExitCode kan bruges af operativsystemet / scripts til at tjekke om programmet fejlede
                     Environment.ExitCode = 1;
                     return;
                 }
 
-                // Main menu loop
+                // Hovedmenu – løber til brugeren vælger "Afslut"
                 while (true)
                 {
+                    // SelectionPrompt viser en simpel menu, hvor man kan vælge med piletaster
                     var choice = AnsiConsole.Prompt(
                         new SelectionPrompt<string>()
                             .Title("Vælg en handling:")
@@ -121,36 +141,28 @@ namespace FlaadesystemV1
                                 "Afslut"
                             }));
 
+                    // Ruter til den rigtige undermenu baseret på valget
                     switch (choice)
                     {
-                        case "Kunder":
-                            CustomersMenu(connectionString);
-                            break;
-                        case "Biler":
-                            CarsMenu(connectionString);
-                            break;
-                        case "Udlejninger":
-                            RentalsMenu(connectionString);
-                            break;
-                        case "Salg":
-                            SalesMenu(connectionString);
-                            break;
-                        case "Service Center":
-                            ServiceCenterMenu(connectionString);
-                            break;
-                        case "Afslut":
-                            return;
+                        case "Kunder": CustomersMenu(connectionString); break;
+                        case "Biler": CarsMenu(connectionString); break;
+                        case "Udlejninger": RentalsMenu(connectionString); break;
+                        case "Salg": SalesMenu(connectionString); break;
+                        case "Service Center": ServiceCenterMenu(connectionString); break;
+                        case "Afslut": return; // bryder ud af while-loopet og afslutter programmet
                     }
                 }
             }
             catch (Exception ex)
             {
+                // Generel fejlfangst – viser fejlbeskeden og sætter exit-kode til 1
+                // Markup.Escape sikrer at evt. specialtegn i fejlbeskeden ikke tolkes som markup
                 AnsiConsole.MarkupLine($"[red]Fejl:[/] {Markup.Escape(ex.Message)}");
                 Environment.ExitCode = 1;
             }
         }
 
-        // ---- Menus with Tilbage and Delete actions ----
+        // ===================== KUNDER =====================
 
         private static void CustomersMenu(string connectionString)
         {
@@ -169,7 +181,6 @@ namespace FlaadesystemV1
                 }
                 else if (action == "Slet kunde")
                 {
-                    // load customers to select
                     var items = new List<string>();
                     using (var conn = new NpgsqlConnection(connectionString))
                     {
@@ -179,7 +190,7 @@ namespace FlaadesystemV1
                         using (var rdr = cmd.ExecuteReader())
                         {
                             while (rdr.Read())
-                                items.Add($"{rdr.GetInt32(0)}: { (rdr.IsDBNull(1) ? "" : rdr.GetString(1)) }");
+                                items.Add($"{rdr.GetInt32(0)}: {(rdr.IsDBNull(1) ? "" : rdr.GetString(1))}");
                         }
                     }
 
@@ -191,6 +202,7 @@ namespace FlaadesystemV1
 
                     var sel = AnsiConsole.Prompt(new SelectionPrompt<string>().Title("Vælg kunde at slette:").AddChoices(items));
                     var id = int.Parse(sel.Split(':')[0]);
+
                     if (AnsiConsole.Confirm($"Er du sikker på du vil slette kunde {sel}?"))
                     {
                         using (var conn = new NpgsqlConnection(connectionString))
@@ -206,12 +218,14 @@ namespace FlaadesystemV1
                         AnsiConsole.MarkupLine("[green]Kunde slettet.[/]");
                     }
                 }
-                else // Tilbage
+                else
                 {
                     return;
                 }
             }
         }
+
+        // ===================== BILER =====================
 
         private static void CarsMenu(string connectionString)
         {
@@ -239,7 +253,7 @@ namespace FlaadesystemV1
                         using (var rdr = cmd.ExecuteReader())
                         {
                             while (rdr.Read())
-                                items.Add($"{rdr.GetInt32(0)}: { (rdr.IsDBNull(1) ? "" : rdr.GetString(1)) }");
+                                items.Add($"{rdr.GetInt32(0)}: {(rdr.IsDBNull(1) ? "" : rdr.GetString(1))}");
                         }
                     }
 
@@ -251,6 +265,7 @@ namespace FlaadesystemV1
 
                     var sel = AnsiConsole.Prompt(new SelectionPrompt<string>().Title("Vælg bil at slette:").AddChoices(items));
                     var id = int.Parse(sel.Split(':')[0]);
+
                     if (AnsiConsole.Confirm($"Er du sikker på du vil slette bil {sel}?"))
                     {
                         using (var conn = new NpgsqlConnection(connectionString))
@@ -266,12 +281,14 @@ namespace FlaadesystemV1
                         AnsiConsole.MarkupLine("[green]Bil slettet.[/]");
                     }
                 }
-                else // Tilbage
+                else
                 {
                     return;
                 }
             }
         }
+
+        // ===================== UDLEJNINGER =====================
 
         private static void RentalsMenu(string connectionString)
         {
@@ -311,6 +328,7 @@ namespace FlaadesystemV1
 
                     var sel = AnsiConsole.Prompt(new SelectionPrompt<string>().Title("Vælg udlejning at slette:").AddChoices(items));
                     var id = int.Parse(sel.Split(':')[0]);
+
                     if (AnsiConsole.Confirm($"Er du sikker på du vil slette udlejning {sel}?"))
                     {
                         using (var conn = new NpgsqlConnection(connectionString))
@@ -326,12 +344,14 @@ namespace FlaadesystemV1
                         AnsiConsole.MarkupLine("[green]Udlejning slettet.[/]");
                     }
                 }
-                else // Tilbage
+                else
                 {
                     return;
                 }
             }
         }
+
+        // ===================== SALG =====================
 
         private static void SalesMenu(string connectionString)
         {
@@ -367,6 +387,7 @@ namespace FlaadesystemV1
 
                     var sel = AnsiConsole.Prompt(new SelectionPrompt<string>().Title("Vælg salg at slette:").AddChoices(items));
                     var id = int.Parse(sel.Split(':')[0]);
+
                     if (AnsiConsole.Confirm($"Er du sikker på du vil slette salg {sel}?"))
                     {
                         using (var conn = new NpgsqlConnection(connectionString))
@@ -382,12 +403,14 @@ namespace FlaadesystemV1
                         AnsiConsole.MarkupLine("[green]Salg slettet.[/]");
                     }
                 }
-                else // Tilbage
+                else
                 {
                     return;
                 }
             }
         }
+
+        // ===================== SERVICE CENTER =====================
 
         private static void ServiceCenterMenu(string connectionString)
         {
@@ -402,15 +425,14 @@ namespace FlaadesystemV1
 
                 if (action == "Slet service")
                 {
-                    // Build items dynamically depending on whether service_id column exists
                     var items = new List<(string Key, string Label)>();
                     using (var conn = new NpgsqlConnection(connectionString))
                     {
                         conn.Open();
 
-                        // check for service_id column
                         bool hasServiceId;
-                        using (var chk = new NpgsqlCommand("SELECT 1 FROM information_schema.columns WHERE table_name = 'service_center' AND column_name = 'service_id' LIMIT 1", conn))
+                        using (var chk = new NpgsqlCommand(
+                            "SELECT 1 FROM information_schema.columns WHERE table_name = 'service_center' AND column_name = 'service_id' LIMIT 1", conn))
                         {
                             hasServiceId = chk.ExecuteScalar() != null;
                         }
@@ -423,8 +445,7 @@ namespace FlaadesystemV1
                             {
                                 while (rdr.Read())
                                 {
-                                    if (rdr.IsDBNull(0))
-                                        continue;
+                                    if (rdr.IsDBNull(0)) continue;
                                     var svcId = rdr.GetInt32(0).ToString();
                                     var invoice = rdr.IsDBNull(1) ? "" : rdr.GetString(1);
                                     items.Add((svcId, $"{svcId}: {invoice}"));
@@ -433,7 +454,6 @@ namespace FlaadesystemV1
                         }
                         else
                         {
-                            // fall back to using invoice_id as identifier (may be string)
                             const string sql = "SELECT invoice_id, submitted_date FROM service_center ORDER BY invoice_id";
                             using (var cmd = new NpgsqlCommand(sql, conn))
                             using (var rdr = cmd.ExecuteReader())
@@ -463,7 +483,6 @@ namespace FlaadesystemV1
                         {
                             conn.Open();
 
-                            // determine whether the selected key is numeric (service_id) or string (invoice_id)
                             int numericId;
                             if (int.TryParse(selected.Key, out numericId))
                             {
@@ -487,14 +506,14 @@ namespace FlaadesystemV1
                         AnsiConsole.MarkupLine("[green]Service slettet.[/]");
                     }
                 }
-                else // Tilbage
+                else
                 {
                     return;
                 }
             }
         }
 
-        // ---- Existing show/add functions (unchanged semantics) ----
+        // ===================== SHOW / ADD HJÆLPEMETODER =====================
 
         private static void ShowCustomers(string connectionString)
         {
@@ -525,7 +544,7 @@ namespace FlaadesystemV1
 
         private static void AddCustomer(string connectionString)
         {
-            var name = AnsiConsole.Ask<string>("Indtast [yellow]kundenavn[/]:");
+            var name = AnsiConsole.Ask<string>("Indtast [yellow]kundens fornavn og efternavn[/]:");
             var email = AnsiConsole.Ask<string>("Indtast [yellow]kunde email[/]:");
 
             using (var conn = new NpgsqlConnection(connectionString))
@@ -553,7 +572,6 @@ namespace FlaadesystemV1
             using (var conn = new NpgsqlConnection(connectionString))
             {
                 conn.Open();
-                // quoted identifiers because your columns are camelCase (case-sensitive if created quoted)
                 const string sql = "SELECT \"carId\", \"carModel\", \"carYear\" FROM cars ORDER BY \"carId\"";
                 using (var cmd = new NpgsqlCommand(sql, conn))
                 using (var rdr = cmd.ExecuteReader())
@@ -579,7 +597,6 @@ namespace FlaadesystemV1
             using (var conn = new NpgsqlConnection(connectionString))
             {
                 conn.Open();
-                // use quoted column names to match DB
                 const string sql = "INSERT INTO cars (\"carModel\", \"carYear\") VALUES (@model, @year)";
                 using (var cmd = new NpgsqlCommand(sql, conn))
                 {
@@ -605,7 +622,6 @@ namespace FlaadesystemV1
             using (var conn = new NpgsqlConnection(connectionString))
             {
                 conn.Open();
-                // rentals schema: rental_id, rental_car_id, rented_from_date, rented_to_date, daily_price, customer_id
                 const string sql = "SELECT rental_id, rental_car_id, rented_from_date, rented_to_date, daily_price, customer_id FROM rentals ORDER BY rental_id";
                 using (var cmd = new NpgsqlCommand(sql, conn))
                 using (var rdr = cmd.ExecuteReader())
@@ -629,7 +645,6 @@ namespace FlaadesystemV1
 
         private static void CreateRental(string connectionString)
         {
-            // Load cars (use quoted names)
             var cars = new List<(int Id, string Label)>();
             using (var conn = new NpgsqlConnection(connectionString))
             {
@@ -654,12 +669,9 @@ namespace FlaadesystemV1
                 return;
             }
 
-            var carChoice = AnsiConsole.Prompt(
-                new SelectionPrompt<string>().Title("Vælg bil:")
-                    .AddChoices(cars.ConvertAll(c => c.Label)));
+            var carChoice = AnsiConsole.Prompt(new SelectionPrompt<string>().Title("Vælg bil:").AddChoices(cars.ConvertAll(c => c.Label)));
             var selectedCar = cars.Find(c => c.Label == carChoice).Id;
 
-            // Load customers
             var customers = new List<(int Id, string Label)>();
             using (var conn = new NpgsqlConnection(connectionString))
             {
@@ -683,9 +695,7 @@ namespace FlaadesystemV1
                 return;
             }
 
-            var custChoice = AnsiConsole.Prompt(
-                new SelectionPrompt<string>().Title("Vælg kunde for udlejning:")
-                    .AddChoices(customers.ConvertAll(c => c.Label)));
+            var custChoice = AnsiConsole.Prompt(new SelectionPrompt<string>().Title("Vælg kunde for udlejning:").AddChoices(customers.ConvertAll(c => c.Label)));
             var selectedCustomer = customers.Find(c => c.Label == custChoice).Id;
 
             var from = AnsiConsole.Ask<DateTime>("Indtast [yellow]startdato[/] (yyyy-MM-dd):", DateTime.Now.Date);
@@ -695,7 +705,6 @@ namespace FlaadesystemV1
             using (var conn = new NpgsqlConnection(connectionString))
             {
                 conn.Open();
-                // rentals insert without non-existing renters_name column
                 const string insert = "INSERT INTO rentals (rental_car_id, rented_from_date, rented_to_date, daily_price, customer_id) " +
                                       "VALUES (@carId, @from, @to, @dailyPrice, @customerId)";
                 using (var cmd = new NpgsqlCommand(insert, conn))
@@ -754,7 +763,6 @@ namespace FlaadesystemV1
             using (var conn = new NpgsqlConnection(connectionString))
             {
                 conn.Open();
-                // service_center has no service_id in this schema; select available columns
                 const string sql = "SELECT submitted_date, completion_date, invoice_id, invoice_price, intern, ekstern FROM service_center ORDER BY invoice_id";
                 using (var cmd = new NpgsqlCommand(sql, conn))
                 using (var rdr = cmd.ExecuteReader())
